@@ -3,18 +3,20 @@ import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
-# Загружаем переменные из .env файла (если есть)
 load_dotenv()
 
-@dataclass(frozen=True)  # неизменяемый конфиг
+
+@dataclass(frozen=True)
 class Config:
     # Telegram
     TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
     CHAT_ID: str = os.getenv("CHAT_ID", "")
 
     # RSS
-    RSS_URL: str = os.getenv("RSS_URL", "http://feed.rutracker.cc/atom/f/0.atom")
+    RSS_URL: str = os.getenv("RSS_URL", "https://feed.rutracker.cc/atom/f/0.atom")
     RSS_MAX_ENTRIES: int = int(os.getenv("RSS_MAX_ENTRIES", "30"))
+    RSS_TIMEOUT: int = int(os.getenv("RSS_TIMEOUT", "30"))
+    RSS_RETRIES: int = int(os.getenv("RSS_RETRIES", "3"))
 
     # База данных
     DB_PATH: str = os.getenv("DB_PATH", "data/rutracker.db")
@@ -39,11 +41,10 @@ class Config:
     CHECK_INTERVAL_MINUTES: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "60"))
 
     def __post_init__(self):
-        # Простая проверка обязательных параметров
         if not self.TELEGRAM_TOKEN:
             raise ValueError("TELEGRAM_TOKEN не задан! Укажите в .env или переменных окружения.")
         if not self.CHAT_ID:
             raise ValueError("CHAT_ID не задан! Укажите в .env или переменных окружения.")
 
-# Создаём единственный экземпляр конфига для всего приложения
+
 config = Config()
