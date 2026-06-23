@@ -137,7 +137,7 @@ class Database:
             cursor.execute('DELETE FROM torrents WHERE rss_id = ?', (rss_id,))
             conn.commit()
             return cursor.rowcount > 0  # Проверяем, удалилась ли запись
-        
+
     # ========== Получение по статусам ==========
     def get_entries_by_status(
             self,

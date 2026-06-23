@@ -3,7 +3,7 @@ import sys
 import os
 
 # Добавляем папку src в путь импорта
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from config import config
 
