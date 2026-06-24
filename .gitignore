@@ -9,4 +9,5 @@ data/
 *.log
 *.sqlite3
 .DS_Store
+cookies.json
 .idea/

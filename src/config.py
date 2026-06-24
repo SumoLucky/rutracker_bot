@@ -22,8 +22,13 @@ class Config:
     DB_PATH: str = os.getenv("DB_PATH", "data/rutracker.db")
 
     # Парсинг страниц
+    RUTRACKER_USERNAME: str = os.getenv("RUTRACKER_USERNAME", "")
+    RUTRACKER_PASSWORD: str = os.getenv("RUTRACKER_PASSWORD", "")
+    RUTRACKER_COOKIES: str = os.getenv("RUTRACKER_COOKIES", "")
     PARSING_DELAY: float = float(os.getenv("PARSING_DELAY", "0.5"))
     PARSING_TIMEOUT: int = int(os.getenv("PARSING_TIMEOUT", "15"))
+    PARSING_LIMIT: int = int(os.getenv("PARSING_LIMIT", "20"))
+    PARSING_RETRIES: int = int(os.getenv("PARSING_RETRIES", "3"))
 
     # ИИ
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
