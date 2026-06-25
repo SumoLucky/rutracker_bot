@@ -37,6 +37,9 @@ class TorrentEntry:
     ai_summary: str = ""
     recommendation: str = "unknown"
     ai_tags: List[str] = None
+    ai_category: str = ""  # уточнённая категория от ИИ
+    ai_retries: int = 0
+    ai_last_error: str = ""
 
     # === Статусы обработки ===
     is_page_parsed: bool = False

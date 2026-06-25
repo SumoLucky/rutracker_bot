@@ -31,10 +31,14 @@ class Config:
     PARSING_RETRIES: int = int(os.getenv("PARSING_RETRIES", "3"))
 
     # ИИ
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    USE_LOCAL_AI: bool = os.getenv("USE_LOCAL_AI", "false").lower() == "true"
-    LOCAL_AI_URL: str = os.getenv("LOCAL_AI_URL", "http://localhost:11434/api/generate")
-    LOCAL_AI_MODEL: str = os.getenv("LOCAL_AI_MODEL", "llama2")
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    DEEPSEEK_MAX_TOKENS: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "2048"))
+    DEEPSEEK_TEMPERATURE: float = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.3"))
+    DEEPSEEK_TIMEOUT: int = int(os.getenv("DEEPSEEK_TIMEOUT", "30"))
+    DEEPSEEK_RETRIES: int = int(os.getenv("DEEPSEEK_RETRIES", "3"))
+    AI_LIMIT: int = int(os.getenv("AI_LIMIT", "10"))  # сколько записей обрабатывать за один запуск
 
     # Фильтрация и отправка
     MIN_RELEVANCE_SCORE: int = int(os.getenv("MIN_RELEVANCE_SCORE", "50"))

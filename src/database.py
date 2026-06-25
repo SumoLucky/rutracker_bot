@@ -21,6 +21,7 @@ class Database:
 
     @contextmanager
     def get_connection(self):
+        """Контекстный менеджер для соединения с БД"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         # Включаем поддержку внешних ключей
@@ -31,6 +32,7 @@ class Database:
             conn.close()
 
     def _init_db(self):
+        """Создание таблиц и индексов"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -50,10 +52,13 @@ class Database:
                     downloads INTEGER DEFAULT 0,
                     full_description TEXT,
                     ai_analysis TEXT,
+                    ai_retries INTEGER DEFAULT 0,
+                    ai_last_error TEXT,
                     relevance_score REAL DEFAULT 0,
                     ai_summary TEXT,
                     recommendation TEXT,
                     ai_tags TEXT,
+                    ai_category TEXT,
                     is_page_parsed BOOLEAN DEFAULT 0,
                     is_ai_analyzed BOOLEAN DEFAULT 0,
                     is_sent BOOLEAN DEFAULT 0,
@@ -77,7 +82,7 @@ class Database:
                     status TEXT,
                     message TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (rss_id) REFERENCES torrents(rss_id)
+                    FOREIGN KEY (rss_id) REFERENCES torrents(rss_id) ON DELETE CASCADE
                 )
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_log_rss_id ON processing_log(rss_id)')
@@ -86,6 +91,7 @@ class Database:
             logger.info("Таблицы созданы/проверены")
 
     # ========== CRUD ==========
+
     def save_entry(self, entry: TorrentEntry) -> bool:
         try:
             data = entry.to_dict()
@@ -95,13 +101,13 @@ class Database:
                     INSERT OR REPLACE INTO torrents (
                         rss_id, title, link, updated, summary, author,
                         category_id, category, size, seeds, leechers, downloads, full_description,
-                        ai_analysis, relevance_score, ai_summary, recommendation, ai_tags,
+                        ai_analysis, ai_retries, ai_last_error, relevance_score, ai_summary, recommendation, ai_tags, ai_category,
                         is_page_parsed, is_ai_analyzed, is_sent,
                         created_at, updated_at
                     ) VALUES (
                         :rss_id, :title, :link, :updated, :summary, :author,
                         :category_id, :category, :size, :seeds, :leechers, :downloads, :full_description,
-                        :ai_analysis, :relevance_score, :ai_summary, :recommendation, :ai_tags,
+                        :ai_analysis, :ai_retries, :ai_last_error, :relevance_score, :ai_summary, :recommendation, :ai_tags, :ai_category,
                         :is_page_parsed, :is_ai_analyzed, :is_sent,
                         :created_at, :updated_at
                     )
@@ -128,26 +134,25 @@ class Database:
             return cursor.fetchone() is not None
 
     def delete_entry(self, rss_id: str) -> bool:
-        """Удаление записи и связанных логов"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            # Сначала удаляем логи (чтобы не нарушить внешний ключ)
             cursor.execute('DELETE FROM processing_log WHERE rss_id = ?', (rss_id,))
-            # Затем удаляем саму запись
             cursor.execute('DELETE FROM torrents WHERE rss_id = ?', (rss_id,))
             conn.commit()
-            return cursor.rowcount > 0  # Проверяем, удалилась ли запись
+            return cursor.rowcount > 0
 
     # ========== Получение по статусам ==========
+
     def get_entries_by_status(
-            self,
-            page_parsed: Optional[bool] = None,
-            ai_analyzed: Optional[bool] = None,
-            sent: Optional[bool] = None,
-            limit: int = 50,
-            order_by: str = "updated DESC"
+        self,
+        page_parsed: Optional[bool] = None,
+        ai_analyzed: Optional[bool] = None,
+        sent: Optional[bool] = None,
+        limit: Optional[int] = None,
+        order_by: str = "updated DESC"
     ) -> List[TorrentEntry]:
-        # Безопасная проверка order_by (только допустимые имена)
+        """Получение записей с фильтром по статусам"""
+        # Безопасная проверка order_by
         allowed_orders = ["updated DESC", "updated ASC", "relevance_score DESC", "created_at DESC"]
         if order_by not in allowed_orders:
             order_by = "updated DESC"
@@ -165,8 +170,10 @@ class Database:
             params.append(1 if sent else 0)
 
         where = "WHERE " + " AND ".join(conditions) if conditions else ""
-        query = f"SELECT * FROM torrents {where} ORDER BY {order_by} LIMIT ?"
-        params.append(limit)
+        query = f"SELECT * FROM torrents {where} ORDER BY {order_by}"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -174,43 +181,53 @@ class Database:
             rows = cursor.fetchall()
             return [TorrentEntry.from_dict(dict(row)) for row in rows]
 
-    def get_unparsed_entries(self, limit: int = 20) -> List[TorrentEntry]:
+    def get_unparsed_entries(self, limit: Optional[int] = None) -> List[TorrentEntry]:
         return self.get_entries_by_status(page_parsed=False, ai_analyzed=False, sent=False, limit=limit)
 
-    def get_unanalyzed_entries(self, limit: int = 20) -> List[TorrentEntry]:
+    def get_unanalyzed_entries(self, limit: Optional[int] = None) -> List[TorrentEntry]:
+        """Получение записей, которые спарсены, но не проанализированы ИИ"""
         return self.get_entries_by_status(page_parsed=True, ai_analyzed=False, sent=False, limit=limit)
 
-    def get_ready_to_send(self, limit: int = 20) -> List[TorrentEntry]:
+    def get_ready_to_send(self, limit: Optional[int] = None) -> List[TorrentEntry]:
         return self.get_entries_by_status(page_parsed=True, ai_analyzed=True, sent=False, limit=limit)
 
-    def get_ready_to_send_by_score(self, min_score: Optional[int] = None, limit: int = 20) -> List[TorrentEntry]:
+    def get_ready_to_send_by_score(self, min_score: Optional[int] = None, limit: Optional[int] = None) -> List[TorrentEntry]:
         if min_score is None:
             min_score = config.MIN_RELEVANCE_SCORE
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
+            query = '''
                 SELECT * FROM torrents 
                 WHERE is_page_parsed = 1 AND is_ai_analyzed = 1 AND is_sent = 0
                   AND relevance_score >= ?
                 ORDER BY relevance_score DESC, updated DESC
-                LIMIT ?
-            ''', (min_score, limit))
+            '''
+            params = [min_score]
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            cursor.execute(query, params)
             rows = cursor.fetchall()
             return [TorrentEntry.from_dict(dict(row)) for row in rows]
 
-    def get_recent_entries(self, hours: int = 24, limit: int = 50) -> List[TorrentEntry]:
+    def get_recent_entries(self, hours: int = 24, limit: Optional[int] = None) -> List[TorrentEntry]:
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
+            query = '''
                 SELECT * FROM torrents 
                 WHERE updated > datetime('now', ?)
                 ORDER BY updated DESC
-                LIMIT ?
-            ''', (f'-{hours} hours', limit))
+            '''
+            params = [f'-{hours} hours']
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            cursor.execute(query, params)
             rows = cursor.fetchall()
             return [TorrentEntry.from_dict(dict(row)) for row in rows]
 
     # ========== Обновление статусов ==========
+
     def update_status(self, rss_id: str, page_parsed: Optional[bool] = None,
                       ai_analyzed: Optional[bool] = None, sent: Optional[bool] = None) -> bool:
         updates = []
@@ -237,14 +254,13 @@ class Database:
 
     def mark_as_parsed(self, rss_id: str) -> bool:
         return self.update_status(rss_id, page_parsed=True)
-
     def mark_as_analyzed(self, rss_id: str) -> bool:
         return self.update_status(rss_id, ai_analyzed=True)
-
     def mark_as_sent(self, rss_id: str) -> bool:
         return self.update_status(rss_id, sent=True)
 
     # ========== Логи ==========
+
     def log_processing(self, rss_id: str, stage: str, status: str, message: str = ""):
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -277,6 +293,7 @@ class Database:
             return deleted
 
     # ========== Статистика ==========
+
     def get_stats(self) -> Dict:
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -319,6 +336,7 @@ class Database:
             return stats
 
     # ========== Очистка ==========
+
     def cleanup_old_entries(self, days: int = 30) -> int:
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -340,4 +358,4 @@ class Database:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     db = Database()
-    # ... тест ...
+    print("База данных готова.")
