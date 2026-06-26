@@ -43,6 +43,7 @@ class Config:
     # Фильтрация и отправка
     MIN_RELEVANCE_SCORE: int = int(os.getenv("MIN_RELEVANCE_SCORE", "50"))
     MAX_ENTRIES_PER_DAY: int = int(os.getenv("MAX_ENTRIES_PER_DAY", "20"))
+    SEND_RETRIES: int = int(os.getenv("SEND_RETRIES", "3"))
     SEND_DELAY: float = float(os.getenv("SEND_DELAY", "1.0"))
 
     # Режимы
