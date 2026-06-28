@@ -22,7 +22,7 @@ class Config:
     RSS_RETRIES: int = int(os.getenv("RSS_RETRIES", "3"))
 
     # База данных
-    DB_PATH: str = os.getenv("DB_PATH", "data/rutracker.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")  # Например: postgresql://user:pass@host:port/dbname
 
     # Парсинг страниц
     RUTRACKER_USERNAME: str = os.getenv("RUTRACKER_USERNAME", "")
