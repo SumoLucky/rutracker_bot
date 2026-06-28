@@ -8,6 +8,9 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class Config:
+    # === Вебхук ===
+    WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "")
+
     # Telegram
     TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
     CHAT_ID: str = os.getenv("CHAT_ID", "")
@@ -27,7 +30,7 @@ class Config:
     RUTRACKER_COOKIES: str = os.getenv("RUTRACKER_COOKIES", "")
     PARSING_DELAY: float = float(os.getenv("PARSING_DELAY", "0.5"))
     PARSING_TIMEOUT: int = int(os.getenv("PARSING_TIMEOUT", "15"))
-    PARSING_LIMIT: int = int(os.getenv("PARSING_LIMIT", "20"))
+    PARSING_LIMIT: Optional[int] = int(os.getenv("PARSING_LIMIT", "0")) or None
     PARSING_RETRIES: int = int(os.getenv("PARSING_RETRIES", "3"))
 
     # ИИ
@@ -38,15 +41,16 @@ class Config:
     DEEPSEEK_TEMPERATURE: float = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.3"))
     DEEPSEEK_TIMEOUT: int = int(os.getenv("DEEPSEEK_TIMEOUT", "30"))
     DEEPSEEK_RETRIES: int = int(os.getenv("DEEPSEEK_RETRIES", "3"))
-    AI_LIMIT: int = int(os.getenv("AI_LIMIT", "10"))  # сколько записей обрабатывать за один запуск
+    AI_LIMIT: Optional[int] = int(os.getenv("AI_LIMIT", "0")) or None
 
     # Фильтрация и отправка
-    MIN_RELEVANCE_SCORE: int = int(os.getenv("MIN_RELEVANCE_SCORE", "50"))
+    MIN_RELEVANCE_SCORE: int = int(os.getenv("MIN_RELEVANCE_SCORE", "0"))
     MAX_ENTRIES_PER_DAY: int = int(os.getenv("MAX_ENTRIES_PER_DAY", "20"))
     SEND_RETRIES: int = int(os.getenv("SEND_RETRIES", "3"))
     SEND_DELAY: float = float(os.getenv("SEND_DELAY", "1.0"))
 
     # Режимы
+    RUN_ON_START: bool = os.getenv("RUN_ON_START", "true").lower() == "true"
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     CHECK_INTERVAL_MINUTES: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "60"))
 

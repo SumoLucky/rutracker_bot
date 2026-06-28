@@ -36,11 +36,11 @@ class AIAnalyzer:
             )
 
     def _build_prompt(self, entry: TorrentEntry) -> str:
-        """Формирует промпт для ИИ"""
+        """Формирует промпт для ИИ (на русском языке)"""
         description = entry.full_description[:3000] if entry.full_description else entry.summary
 
         prompt = """
-Ты — эксперт по оценке контента на торрент-трекерах. Проанализируй следующую раздачу и верни ТОЛЬКО JSON-объект с указанными полями.
+Ты — эксперт по оценке контента на торрент-трекерах. Проанализируй следующую раздачу и верни ТОЛЬКО JSON-объект с указанными полями. **Все текстовые поля (category, tags, ai_summary, reason) должны быть строго на русском языке.**
 
 Название: {title}
 Категория: {category}
@@ -52,11 +52,11 @@ class AIAnalyzer:
 Требуется вернуть JSON строго в формате:
 {{
   "relevance_score": <число от 0 до 100, насколько эта раздача полезна/интересна>,
-  "category": <уточнённая категория (строка), если категория не подходит, оставь пустой>,
-  "tags": [<массив ключевых слов (строк)>],
-  "ai_summary": <краткое описание содержания (1–2 предложения)>,
+  "category": <уточнённая категория (строка на русском), если категория не подходит, оставь пустой>,
+  "tags": [<массив ключевых слов (строк на русском)>],
+  "ai_summary": <краткое описание содержания на русском (1–2 предложения)>,
   "recommendation": <"download" | "maybe" | "skip">,
-  "reason": <почему такая оценка (коротко)>
+  "reason": <почему такая оценка (коротко на русском)>
 }}
 
 Не добавляй никакого пояснительного текста, только JSON.
@@ -74,16 +74,16 @@ class AIAnalyzer:
 
     def _call_api(self, prompt: str) -> Optional[str]:
         """Отправляет запрос к DeepSeek через OpenAI SDK"""
-        logger.info(f"Отправка запроса с max_tokens={self.max_tokens}")
         if not self.client:
             return None
 
         try:
             client_with_timeout = self.client.with_options(timeout=self.timeout)
+            logger.info(f"Отправка запроса с max_tokens={self.max_tokens}")
             response = client_with_timeout.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "Ты полезный ассистент, который всегда отвечает строго в формате JSON."},
+                    {"role": "system", "content": "Ты полезный ассистент, который всегда отвечает строго в формате JSON и на русском языке."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=self.max_tokens,
@@ -92,7 +92,6 @@ class AIAnalyzer:
                 stream=False,
             )
             content = response.choices[0].message.content
-            # Логируем ответ для отладки (уровень DEBUG, можно временно включить INFO)
             logger.debug(f"Ответ DeepSeek:\n{content}")
             return content
         except Exception as e:
@@ -105,30 +104,24 @@ class AIAnalyzer:
             logger.error("Пустой ответ от API")
             return None
 
-        # Логируем сырой ответ (уровень DEBUG)
         logger.debug(f"Сырой ответ для парсинга:\n{response_text}")
 
         try:
-            # Пробуем найти JSON-блок в Markdown-формате
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
             else:
-                # Ищем первый JSON-объект
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                 if json_match:
                     json_str = json_match.group()
                 else:
-                    # Если ничего не найдено, пробуем распарсить весь ответ как JSON
                     json_str = response_text.strip()
                     if not json_str.startswith('{') and not json_str.startswith('['):
                         logger.error("В ответе не найден JSON")
                         logger.error(f"Ответ целиком: {response_text[:2000]}")
                         return None
 
-            # Удаляем управляющие символы, которые могут мешать парсингу
             json_str = re.sub(r'[\x00-\x1f\x7f]', '', json_str)
-
             data = json.loads(json_str)
 
             required_fields = ["relevance_score", "category", "tags", "ai_summary", "recommendation", "reason"]
@@ -170,7 +163,6 @@ class AIAnalyzer:
         if response_text:
             result = self._parse_response(response_text)
             if result:
-                # Успешно
                 entry.relevance_score = float(result["relevance_score"])
                 entry.ai_category = result.get("category", "")
                 entry.ai_tags = result.get("tags", [])
@@ -182,7 +174,6 @@ class AIAnalyzer:
                 entry.ai_last_error = ""
                 return entry
 
-        # Неудачно
         entry.ai_retries += 1
         entry.ai_last_error = "Ошибка API или парсинга ответа"
 
@@ -199,7 +190,10 @@ class AIAnalyzer:
         return None
 
     def process_entries(self, limit: Optional[int] = None) -> int:
-        """Обрабатывает записи, требующие ИИ-анализа"""
+        """
+        Обрабатывает записи, требующие ИИ-анализа.
+        Если limit не указан, обрабатываются все неанализированные записи.
+        """
         if not self.api_key:
             logger.warning("API-ключ не задан, пропускаем ИИ-анализ")
             return 0
