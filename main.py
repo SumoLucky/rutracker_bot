@@ -1,3 +1,4 @@
+# Комментарий для проверки автодеплоя
 # main.py
 import logging
 import os
