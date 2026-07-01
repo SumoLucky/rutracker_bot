@@ -10,4 +10,5 @@ data/
 *.sqlite3
 .DS_Store
 cookies.json
+deploy.sh
 .idea/
