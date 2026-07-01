@@ -1,21 +1,25 @@
 # main.py
 import logging
-import sys
 import os
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta  # <-- исправлено
 
-from fastapi import FastAPI, Request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 import uvicorn
 from apscheduler.schedulers.background import BackgroundScheduler
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
-from database import Database
-from orchestrator import Orchestrator
 from config import config
+from database import Database
+from fastapi import FastAPI, Request
+from orchestrator import Orchestrator
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+import subprocess
+import hmac
+import hashlib
+
+DEPLOY_SECRET = os.getenv("DEPLOY_SECRET", "ваш_секрет_замените_на_сервере")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 # Настройка логирования
 logging.basicConfig(
@@ -163,6 +167,29 @@ async def health():
 async def root():
     return {"message": "Rutracker Bot is running", "status": "ok"}
 
+
+@app.post("/deploy")
+async def deploy(request: Request):
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not signature:
+        return {"status": "error", "message": "Missing signature"}
+
+    body = await request.body()
+    expected = "sha256=" + hmac.new(
+        DEPLOY_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, signature):
+        return {"status": "error", "message": "Invalid signature"}
+
+    subprocess.Popen(
+        ["/bin/bash", "/home/rutracker/bot/deploy.sh"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    return {"status": "ok", "message": "Deploy started"}
 
 # ========== Точка входа ==========
 if __name__ == "__main__":
