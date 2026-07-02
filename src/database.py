@@ -23,7 +23,6 @@ class Database:
 
     @contextmanager
     def get_connection(self):
-        """Контекстный менеджер для соединения с БД"""
         conn = psycopg2.connect(self.database_url)
         conn.autocommit = False
         try:
@@ -56,6 +55,9 @@ class Database:
                         recommendation TEXT,
                         ai_tags TEXT,
                         ai_category TEXT,
+                        ai_retries INTEGER DEFAULT 0,
+                        ai_last_error TEXT,
+                        content_type TEXT DEFAULT '',
                         is_page_parsed BOOLEAN DEFAULT FALSE,
                         is_ai_analyzed BOOLEAN DEFAULT FALSE,
                         is_sent BOOLEAN DEFAULT FALSE,
@@ -68,6 +70,7 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_status ON torrents(is_page_parsed, is_ai_analyzed, is_sent)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_relevance ON torrents(relevance_score DESC)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_category ON torrents(category)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_content_type ON torrents(content_type)")
 
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS processing_log (
@@ -97,12 +100,14 @@ class Database:
                             rss_id, title, link, updated, summary, author,
                             category_id, category, size, seeds, leechers, downloads, full_description,
                             ai_analysis, relevance_score, ai_summary, recommendation, ai_tags, ai_category,
+                            ai_retries, ai_last_error, content_type,
                             is_page_parsed, is_ai_analyzed, is_sent,
                             created_at, updated_at
                         ) VALUES (
                             %(rss_id)s, %(title)s, %(link)s, %(updated)s, %(summary)s, %(author)s,
                             %(category_id)s, %(category)s, %(size)s, %(seeds)s, %(leechers)s, %(downloads)s, %(full_description)s,
                             %(ai_analysis)s, %(relevance_score)s, %(ai_summary)s, %(recommendation)s, %(ai_tags)s, %(ai_category)s,
+                            %(ai_retries)s, %(ai_last_error)s, %(content_type)s,
                             %(is_page_parsed)s, %(is_ai_analyzed)s, %(is_sent)s,
                             %(created_at)s, %(updated_at)s
                         )
@@ -125,6 +130,9 @@ class Database:
                             recommendation = EXCLUDED.recommendation,
                             ai_tags = EXCLUDED.ai_tags,
                             ai_category = EXCLUDED.ai_category,
+                            ai_retries = EXCLUDED.ai_retries,
+                            ai_last_error = EXCLUDED.ai_last_error,
+                            content_type = EXCLUDED.content_type,
                             is_page_parsed = EXCLUDED.is_page_parsed,
                             is_ai_analyzed = EXCLUDED.is_ai_analyzed,
                             is_sent = EXCLUDED.is_sent,
@@ -233,6 +241,28 @@ class Database:
             ORDER BY updated DESC
         """
         params = [hours]
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(limit)
+
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, tuple(params))
+                rows = cur.fetchall()
+                return [TorrentEntry.from_dict(dict(row)) for row in rows]
+
+    def get_entries_without_type(self, limit: Optional[int] = None) -> List[TorrentEntry]:
+        """
+        Возвращает записи, у которых content_type не задан (NULL или пустая строка)
+        и которые уже спарсены (is_page_parsed = TRUE).
+        """
+        query = """
+            SELECT * FROM torrents
+            WHERE (content_type IS NULL OR content_type = '')
+              AND is_page_parsed = TRUE
+            ORDER BY created_at DESC
+        """
+        params = []
         if limit is not None:
             query += " LIMIT %s"
             params.append(limit)
@@ -370,7 +400,6 @@ class Database:
                 return cur.rowcount
 
     def vacuum(self):
-        """Обновление статистики планировщика PostgreSQL"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("ANALYZE")

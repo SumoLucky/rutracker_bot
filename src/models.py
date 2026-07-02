@@ -37,9 +37,12 @@ class TorrentEntry:
     ai_summary: str = ""
     recommendation: str = "unknown"
     ai_tags: List[str] = None
-    ai_category: str = ""  # уточнённая категория от ИИ
+    ai_category: str = ""
     ai_retries: int = 0
     ai_last_error: str = ""
+
+    # === Тип контента (определяется отдельным модулем) ===
+    content_type: str = ""
 
     # === Статусы обработки ===
     is_page_parsed: bool = False
@@ -52,7 +55,6 @@ class TorrentEntry:
 
     def __post_init__(self):
         if self.created_at is None:
-            # naive UTC (без зоны)
             self.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if self.ai_analysis is None:
             self.ai_analysis = {}
@@ -68,6 +70,7 @@ class TorrentEntry:
             data['ai_analysis'] = json.dumps(data['ai_analysis'], ensure_ascii=False)
         if isinstance(data.get('ai_tags'), list):
             data['ai_tags'] = json.dumps(data['ai_tags'], ensure_ascii=False)
+        # content_type — строка, не требует дополнительной обработки
         return data
 
     @classmethod
@@ -113,7 +116,8 @@ class TorrentEntry:
             else:
                 rss_id = f"generated:{calendar.timegm(datetime.now(timezone.utc).utctimetuple())}"
 
-        # --- Дата (используем calendar.timegm для корректного UTC) ---
+        # --- Дата ---
+        updated_dt = None
         if hasattr(raw_entry, 'updated_parsed') and raw_entry.updated_parsed:
             updated_dt = datetime.fromtimestamp(
                 calendar.timegm(raw_entry.updated_parsed),
@@ -160,7 +164,8 @@ class TorrentEntry:
             summary=summary,
             author=author,
             category_id=category_id,
-            category=category_label
+            category=category_label,
+            content_type=""  # будет заполнено позже детектором
         )
 
     def get_short_info(self) -> str:

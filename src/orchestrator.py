@@ -1,7 +1,7 @@
 # src/orchestrator.py
 import logging
 import time
-from typing import Optional, Dict
+from typing import Dict
 from datetime import datetime
 
 from database import Database
@@ -9,6 +9,7 @@ from rss_parser import RSSParser
 from page_parser import PageParser
 from ai_analyzer import AIAnalyzer
 from telegram_sender import TelegramSender
+from type_detector import TypeDetector
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -23,12 +24,12 @@ class Orchestrator:
         self.page_parser = PageParser(db)
         self.ai_analyzer = AIAnalyzer(db)
         self.telegram_sender = TelegramSender(db)
+        self.type_detector = TypeDetector(db)
         self.interval_minutes = config.CHECK_INTERVAL_MINUTES
 
     def _log_stats(self, stats: Dict):
-        """Записывает статистику выполнения в отдельный файл"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open('stats.log', 'a', encoding='utf-8') as f:
                 f.write(f"{timestamp} | "
                         f"RSS: fetched={stats['rss'].get('total_fetched', 0)}, "
@@ -39,24 +40,19 @@ class Orchestrator:
                         f"errors={stats['page'].get('errors', 0)} | "
                         f"AI: processed={stats['ai'].get('processed', 0)}, "
                         f"errors={stats['ai'].get('errors', 0)} | "
+                        f"Types: processed={stats['types'].get('processed', 0)}, "
+                        f"errors={stats['types'].get('errors', 0)} | "
                         f"Telegram: sent={stats['telegram'].get('sent', 0)}, "
                         f"errors={stats['telegram'].get('errors', 0)}\n")
         except Exception as e:
             logger.warning(f"Не удалось записать статистику в файл: {e}")
 
     def run_once(self) -> Dict:
-        """
-        Выполняет один полный цикл обработки:
-        1. Загрузка новых записей из RSS.
-        2. Парсинг страниц для новых записей.
-        3. ИИ-анализ новых записей.
-        4. Отправка в Telegram записей с рейтингом >= порога.
-        Возвращает словарь со статистикой по каждому этапу.
-        """
         stats = {
             'rss': {'total_fetched': 0, 'already_exists': 0, 'saved': 0, 'errors': 0},
             'page': {'processed': 0, 'errors': 0},
             'ai': {'processed': 0, 'errors': 0},
+            'types': {'processed': 0, 'errors': 0},
             'telegram': {'sent': 0, 'errors': 0},
         }
 
@@ -88,7 +84,7 @@ class Orchestrator:
             logger.error(f"Ошибка этапа парсинга страниц: {e}")
             stats['page']['errors'] += 1
 
-        # 3. ИИ-анализ (с проверкой ключа)
+        # 3. ИИ-анализ
         if not config.DEEPSEEK_API_KEY:
             logger.warning("⚠️ DEEPSEEK_API_KEY не задан, этап ИИ-анализа пропущен")
         else:
@@ -100,7 +96,16 @@ class Orchestrator:
                 logger.error(f"Ошибка этапа ИИ-анализа: {e}")
                 stats['ai']['errors'] += 1
 
-        # 4. Отправка в Telegram
+        # 4. Определение типов (после ИИ, чтобы использовать ai_category)
+        try:
+            type_processed = self.type_detector.process_entries()
+            stats['types']['processed'] = type_processed
+            logger.info(f"✅ Определение типов: обработано {type_processed}")
+        except Exception as e:
+            logger.error(f"Ошибка определения типов: {e}")
+            stats['types']['errors'] += 1
+
+        # 5. Отправка в Telegram
         try:
             sent = self.telegram_sender.send_entries()
             stats['telegram']['sent'] = sent
@@ -116,9 +121,7 @@ class Orchestrator:
                     f"проанализировано={db_stats.get('analyzed', 0)}, "
                     f"отправлено={db_stats.get('sent', 0)}")
 
-        # Запись статистики в файл
         self._log_stats(stats)
-
         logger.info("=" * 50)
         logger.info("ПРОГОН ЗАВЕРШЁН")
         logger.info("=" * 50)
@@ -126,9 +129,6 @@ class Orchestrator:
         return stats
 
     def run_forever(self):
-        """
-        Запускает бесконечный цикл с интервалом CHECK_INTERVAL_MINUTES.
-        """
         logger.info(f"🔄 Оркестратор запущен в бесконечном режиме. "
                     f"Интервал: {self.interval_minutes} минут.")
         while True:

@@ -8,6 +8,7 @@ import telebot
 from config import config
 from database import Database
 from models import TorrentEntry
+from type_detector import get_type_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class TelegramSender:
         self.chat_id = config.CHAT_ID
         self.min_score = config.MIN_RELEVANCE_SCORE
         self.delay = config.SEND_DELAY
-        self.retries = config.SEND_RETRIES  # добавим в config
+        self.retries = config.SEND_RETRIES
 
         if not self.token or not self.chat_id:
             logger.error("TELEGRAM_TOKEN или CHAT_ID не заданы, отправка невозможна")
@@ -32,7 +33,11 @@ class TelegramSender:
             self.bot = telebot.TeleBot(self.token)
 
     def _format_message(self, entry: TorrentEntry) -> str:
-        """Формирует HTML-сообщение для отправки"""
+        """Формирует HTML-сообщение для отправки с явным указанием типа"""
+        # Определяем тип и эмодзи
+        content_type = entry.content_type or "неизвестно"
+        emoji = get_type_emoji(content_type)
+
         # Эмодзи для оценки
         score = entry.relevance_score
         if score >= 80:
@@ -65,8 +70,9 @@ class TelegramSender:
             f"📅 <b>Дата:</b> {updated_str}"
         )
 
+        # Формируем сообщение: сначала тип и название
         message = f"""
-{rating_emoji} <b>{entry.title}</b>
+{emoji} <b>{content_type.capitalize()}:</b> {entry.title}
 
 📝 <b>Описание:</b>
 {entry.ai_summary}
@@ -95,12 +101,13 @@ class TelegramSender:
                 if attempt == self.retries:
                     logger.error(f"Не удалось отправить сообщение после {self.retries} попыток")
                     return False
-                time.sleep(2 ** attempt)  # экспоненциальная задержка
+                time.sleep(2 ** attempt)
         return False
 
     def send_entries(self, limit: Optional[int] = None) -> int:
         """
         Отправляет все неотправленные записи с рейтингом >= порога.
+        Если limit указан, отправляет не более limit записей (для тестов).
         """
         if not self.bot:
             logger.error("Бот не инициализирован, отправка невозможна")
@@ -118,15 +125,13 @@ class TelegramSender:
         sent_count = 0
         for entry in entries:
             try:
-                # Формируем сообщение
                 message = self._format_message(entry)
 
-                # Обрезаем, если превышает лимит Telegram
+                # Обрезаем, если превышает лимит
                 if len(message) > self.MAX_MESSAGE_LENGTH:
                     logger.warning(f"Сообщение для {entry.rss_id} превышает {self.MAX_MESSAGE_LENGTH} символов, обрезаем")
                     message = message[:self.MAX_MESSAGE_LENGTH - 10] + "...\n(обрезано)"
 
-                # Отправляем с повторными попытками
                 success = self._send_with_retry(
                     chat_id=self.chat_id,
                     text=message,
@@ -140,10 +145,10 @@ class TelegramSender:
                         entry.rss_id,
                         'telegram_sender',
                         'success',
-                        f'Отправлено (оценка {entry.relevance_score})'
+                        f'Отправлено (тип: {entry.content_type}, оценка: {entry.relevance_score})'
                     )
                     sent_count += 1
-                    logger.info(f"✅ Отправлено: {entry.title[:50]}... (оценка {entry.relevance_score})")
+                    logger.info(f"✅ Отправлено: {entry.title[:50]}... (тип: {entry.content_type}, оценка: {entry.relevance_score})")
                     time.sleep(self.delay)
                 else:
                     self.db.log_processing(
