@@ -1,7 +1,9 @@
 # src/telegram_sender.py
 import logging
 import time
+import os
 from typing import Optional
+from datetime import datetime
 
 import telebot
 
@@ -17,6 +19,8 @@ class TelegramSender:
     """Этап 4: Отправка отфильтрованных записей в Telegram"""
 
     MAX_MESSAGE_LENGTH = 4096
+    LOG_FILE = "sent_messages.log"
+    MAX_LOG_LINES = 200
 
     def __init__(self, db: Database):
         self.db = db
@@ -32,13 +36,38 @@ class TelegramSender:
         else:
             self.bot = telebot.TeleBot(self.token)
 
+    def _log_sent_message(self, message: str):
+        """Сохраняет отправленное сообщение в файл для отладки (только в DEBUG)"""
+        if not config.DEBUG:
+            return
+
+        try:
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            truncated = message[:2000] + "..." if len(message) > 2000 else message
+            entry = f"[{timestamp}]\n{truncated}\n{'-'*60}\n"
+
+            lines = []
+            if os.path.exists(self.LOG_FILE):
+                with open(self.LOG_FILE, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+            separator = '-'*60 + '\n'
+            parts = ''.join(lines).split(separator)
+            if len(parts) > self.MAX_LOG_LINES:
+                parts = parts[-self.MAX_LOG_LINES:]
+
+            with open(self.LOG_FILE, 'w', encoding='utf-8') as f:
+                f.write(separator.join(parts))
+                if parts:
+                    f.write(separator)
+
+        except Exception as e:
+            logger.warning(f"Не удалось записать сообщение в лог: {e}")
+
     def _format_message(self, entry: TorrentEntry) -> str:
-        """Формирует HTML-сообщение для отправки с явным указанием типа"""
-        # Определяем тип и эмодзи
         content_type = entry.content_type or "неизвестно"
         emoji = get_type_emoji(content_type)
 
-        # Эмодзи для оценки
         score = entry.relevance_score
         if score >= 80:
             rating_emoji = "🔥"
@@ -49,20 +78,16 @@ class TelegramSender:
         else:
             rating_emoji = "ℹ️"
 
-        # Рекомендация
         rec = entry.recommendation
         rec_emoji = {"download": "✅", "maybe": "🔄", "skip": "❌"}.get(rec, "ℹ️")
         rec_text = {"download": "скачать", "maybe": "возможно", "skip": "пропустить"}.get(rec, rec)
 
-        # Теги (если есть)
         tags_str = ""
         if entry.ai_tags:
             tags_str = "\n" + " ".join(f"#{tag}" for tag in entry.ai_tags[:5])
 
-        # Дата с fallback
         updated_str = entry.updated.strftime('%d-%m-%Y %H:%M') if entry.updated else "Неизвестно"
 
-        # Краткая сводка
         details = (
             f"📦 <b>Размер:</b> {entry.size}\n"
             f"👤 <b>Автор:</b> {entry.author}\n"
@@ -70,7 +95,6 @@ class TelegramSender:
             f"📅 <b>Дата:</b> {updated_str}"
         )
 
-        # Формируем сообщение: сначала тип и название
         message = f"""
 {emoji} <b>{content_type.capitalize()}:</b> {entry.title}
 
@@ -86,7 +110,6 @@ class TelegramSender:
         return message.strip()
 
     def _send_with_retry(self, chat_id: str, text: str, parse_mode: str, disable_web_page_preview: bool) -> bool:
-        """Отправка с повторными попытками"""
         for attempt in range(1, self.retries + 1):
             try:
                 self.bot.send_message(
@@ -105,10 +128,6 @@ class TelegramSender:
         return False
 
     def send_entries(self, limit: Optional[int] = None) -> int:
-        """
-        Отправляет все неотправленные записи с рейтингом >= порога.
-        Если limit указан, отправляет не более limit записей (для тестов).
-        """
         if not self.bot:
             logger.error("Бот не инициализирован, отправка невозможна")
             return 0
@@ -127,7 +146,6 @@ class TelegramSender:
             try:
                 message = self._format_message(entry)
 
-                # Обрезаем, если превышает лимит
                 if len(message) > self.MAX_MESSAGE_LENGTH:
                     logger.warning(f"Сообщение для {entry.rss_id} превышает {self.MAX_MESSAGE_LENGTH} символов, обрезаем")
                     message = message[:self.MAX_MESSAGE_LENGTH - 10] + "...\n(обрезано)"
@@ -147,6 +165,7 @@ class TelegramSender:
                         'success',
                         f'Отправлено (тип: {entry.content_type}, оценка: {entry.relevance_score})'
                     )
+                    self._log_sent_message(message)
                     sent_count += 1
                     logger.info(f"✅ Отправлено: {entry.title[:50]}... (тип: {entry.content_type}, оценка: {entry.relevance_score})")
                     time.sleep(self.delay)

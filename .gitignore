@@ -10,5 +10,7 @@ data/
 *.sqlite3
 .DS_Store
 cookies.json
+sent_messages.log
+rss_feed.log
 deploy.sh
 .idea/

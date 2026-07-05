@@ -43,7 +43,7 @@ class PageParser:
         if self._load_cookies():
             logger.info("Куки загружены из файла")
             if not self._is_cookie_valid():
-                logger.warning("Куки невалидны, выполняем логин")
+                logger.info("Куки невалидны, выполняем логин")
                 self._login()
         else:
             logger.info("Файл с куками не найден или пуст, выполняем логин")
@@ -73,15 +73,23 @@ class PageParser:
             return False
 
     def _is_cookie_valid(self) -> bool:
-        """Проверяет, валидны ли текущие куки, запросом к главной странице"""
+        """Проверяет, валидны ли куки (залогинен ли пользователь)"""
         try:
             response = self.session.get("https://rutracker.org/forum/index.php", timeout=self.timeout)
-            if response.status_code == 200:
-                if "login.php" in response.url or "Вход" in response.text:
-                    return False
+            # Если нас редиректят на логин — куки невалидны
+            if "login.php" in response.url:
+                return False
+            # Если на странице есть элемент #logged-in-username — мы залогинены
+            soup = BeautifulSoup(response.text, 'html.parser')
+            if soup.find(id='logged-in-username'):
                 return True
+            # Если есть форма логина — невалидны
+            if soup.find('form', {'id': 'login-form-quick'}):
+                return False
+            # Если ничего не понятно, считаем невалидными
             return False
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Ошибка проверки кук: {e}")
             return False
 
     def _login(self) -> bool:
@@ -104,7 +112,8 @@ class PageParser:
                     form_token = token_input.get('value')
 
             if not form_token:
-                logger.warning("Не удалось найти form_token, попытка без него")
+                # Это не критично, часто токен не обязателен
+                logger.debug("Не удалось найти form_token, попытка без него")
                 form_token = ""
 
             login_data = {
