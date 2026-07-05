@@ -2,7 +2,7 @@
 import logging
 import time
 import os
-import html  # <-- добавить
+import html
 from typing import Optional
 from datetime import datetime
 
@@ -44,21 +44,26 @@ class TelegramSender:
         try:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             truncated = message[:2000] + "..." if len(message) > 2000 else message
-            entry = f"[{timestamp}]\n{truncated}\n{'-'*60}\n"
-
-            lines = []
-            if os.path.exists(self.LOG_FILE):
-                with open(self.LOG_FILE, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
+            new_entry = f"[{timestamp}]\n{truncated}\n{'-'*60}\n"
 
             separator = '-'*60 + '\n'
-            parts = ''.join(lines).split(separator)
-            if len(parts) > self.MAX_LOG_LINES:
-                parts = parts[-self.MAX_LOG_LINES:]
+
+            if os.path.exists(self.LOG_FILE):
+                with open(self.LOG_FILE, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                entries = content.split(separator)
+                entries = [e for e in entries if e.strip()]
+            else:
+                entries = []
+
+            entries.append(new_entry)
+
+            if len(entries) > self.MAX_LOG_LINES:
+                entries = entries[-self.MAX_LOG_LINES:]
 
             with open(self.LOG_FILE, 'w', encoding='utf-8') as f:
-                f.write(separator.join(parts))
-                if parts:
+                f.write(separator.join(entries))
+                if entries:
                     f.write(separator)
 
         except Exception as e:
@@ -91,7 +96,6 @@ class TelegramSender:
 
         tags_str = ""
         if entry.ai_tags:
-            # Экранируем теги
             escaped_tags = [html.escape(tag) for tag in entry.ai_tags[:5]]
             tags_str = "\n" + " ".join(f"#{tag}" for tag in escaped_tags)
 
