@@ -2,6 +2,7 @@
 import logging
 import time
 import os
+import html  # <-- добавить
 from typing import Optional
 from datetime import datetime
 
@@ -37,10 +38,9 @@ class TelegramSender:
             self.bot = telebot.TeleBot(self.token)
 
     def _log_sent_message(self, message: str):
-        """Сохраняет отправленное сообщение в файл для отладки (только в DEBUG)"""
+        """Сохраняет отправленное сообщение в файл для отладки (только DEBUG)"""
         if not config.DEBUG:
             return
-
         try:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             truncated = message[:2000] + "..." if len(message) > 2000 else message
@@ -68,6 +68,13 @@ class TelegramSender:
         content_type = entry.content_type or "неизвестно"
         emoji = get_type_emoji(content_type)
 
+        # Экранируем все поля, которые могут содержать HTML-теги
+        title = html.escape(entry.title)
+        ai_summary = html.escape(entry.ai_summary)
+        size = html.escape(entry.size)
+        author = html.escape(entry.author)
+        category = html.escape(entry.category)
+
         score = entry.relevance_score
         if score >= 80:
             rating_emoji = "🔥"
@@ -84,22 +91,24 @@ class TelegramSender:
 
         tags_str = ""
         if entry.ai_tags:
-            tags_str = "\n" + " ".join(f"#{tag}" for tag in entry.ai_tags[:5])
+            # Экранируем теги
+            escaped_tags = [html.escape(tag) for tag in entry.ai_tags[:5]]
+            tags_str = "\n" + " ".join(f"#{tag}" for tag in escaped_tags)
 
         updated_str = entry.updated.strftime('%d-%m-%Y %H:%M') if entry.updated else "Неизвестно"
 
         details = (
-            f"📦 <b>Размер:</b> {entry.size}\n"
-            f"👤 <b>Автор:</b> {entry.author}\n"
+            f"📦 <b>Размер:</b> {size}\n"
+            f"👤 <b>Автор:</b> {author}\n"
             f"📥 <b>Сиды:</b> {entry.seeds}  |  <b>Личи:</b> {entry.leechers}\n"
             f"📅 <b>Дата:</b> {updated_str}"
         )
 
         message = f"""
-{emoji} <b>{content_type.capitalize()}:</b> {entry.title}
+{emoji} <b>{content_type.capitalize()}:</b> {title}
 
 📝 <b>Описание:</b>
-{entry.ai_summary}
+{ai_summary}
 
 📊 <b>Оценка:</b> {score}/100 ({rec_emoji} {rec_text})
 
