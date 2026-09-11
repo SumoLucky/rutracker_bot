@@ -1,7 +1,8 @@
 # main.py
 import logging
-import os
 import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta  # <-- исправлено
 
@@ -19,7 +20,6 @@ import hmac
 import hashlib
 
 DEPLOY_SECRET = os.getenv("DEPLOY_SECRET", "ваш_секрет_замените_на_сервере")
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 # Настройка логирования
 logging.basicConfig(
