@@ -1,10 +1,8 @@
 # src/page_parser.py
-import json
 import logging
 import re
 import time
-from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,177 +14,136 @@ logger = logging.getLogger(__name__)
 
 
 class PageParser:
-    """Этап 2: Парсинг страниц раздач с авторизацией и сохранением кук"""
+    """Этап 2: Парсинг страниц раздач через FlareSolverr (обход Cloudflare Challenge)"""
 
     SELECTORS = {
-        'category': 'td.nav a',
+        'category_links': 'td.nav a',
         'size': '#tor-size-humn',
+        'size_attach_ul': 'fieldset.attach ul.inlined',
         'seeds': 'span.seed b',
         'leechers': 'span.leech b',
-        'downloads': 'td.borderless',
+        'downloads_td': 'td.borderless',
         'description': 'div.post_body',
     }
 
-    COOKIE_FILE = Path("cookies.json")
-
     def __init__(self, db: Database):
         self.db = db
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
-        self.timeout = config.PARSING_TIMEOUT
         self.delay = config.PARSING_DELAY
         self.max_retries = config.PARSING_RETRIES
+        self.flaresolverr_url = config.FLARESOLVERR_URL
+        self.flaresolverr_session = config.FLARESOLVERR_SESSION
+        self.flaresolverr_timeout_ms = config.FLARESOLVERR_TIMEOUT_MS
+        self._session_created = False
 
-        # Пытаемся загрузить куки из файла
-        if self._load_cookies():
-            logger.info("Куки загружены из файла")
-            if not self._is_cookie_valid():
-                logger.info("Куки невалидны, выполняем логин")
-                self._login()
-        else:
-            logger.info("Файл с куками не найден или пуст, выполняем логин")
-            self._login()
+        self._create_session()
 
-    def _save_cookies(self):
-        """Сохраняет текущие куки в файл"""
+    def _create_session(self) -> bool:
+        """Создаёт или переиспользует сессию в FlareSolverr"""
         try:
-            cookies = self.session.cookies.get_dict()
-            with open(self.COOKIE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(cookies, f, ensure_ascii=False, indent=2)
-            logger.debug("Куки сохранены в файл")
-        except Exception as e:
-            logger.error(f"Ошибка сохранения кук: {e}")
-
-    def _load_cookies(self) -> bool:
-        """Загружает куки из файла и устанавливает в сессию"""
-        try:
-            if not self.COOKIE_FILE.exists():
-                return False
-            with open(self.COOKIE_FILE, 'r', encoding='utf-8') as f:
-                cookies = json.load(f)
-            self.session.cookies.update(cookies)
-            return True
-        except Exception as e:
-            logger.error(f"Ошибка загрузки кук: {e}")
-            return False
-
-    def _is_cookie_valid(self) -> bool:
-        """Проверяет, валидны ли куки (залогинен ли пользователь)"""
-        try:
-            response = self.session.get("https://rutracker.org/forum/index.php", timeout=self.timeout)
-            # Если нас редиректят на логин — куки невалидны
-            if "login.php" in response.url:
-                return False
-            # Если на странице есть элемент #logged-in-username — мы залогинены
-            soup = BeautifulSoup(response.text, 'html.parser')
-            if soup.find(id='logged-in-username'):
-                return True
-            # Если есть форма логина — невалидны
-            if soup.find('form', {'id': 'login-form-quick'}):
-                return False
-            # Если ничего не понятно, считаем невалидными
-            return False
-        except Exception as e:
-            logger.warning(f"Ошибка проверки кук: {e}")
-            return False
-
-    def _login(self) -> bool:
-        """Выполняет логин, сохраняет куки"""
-        login_url = "https://rutracker.org/forum/login.php"
-        try:
-            logger.info("Загрузка страницы логина...")
-            response = self.session.get(login_url, timeout=self.timeout)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            # Ищем form_token
-            form_token = None
-            script_match = re.search(r'BB\.form_token\s*=\s*[\'"]([^\'"]+)[\'"]', response.text)
-            if script_match:
-                form_token = script_match.group(1)
-            else:
-                token_input = soup.find('input', {'name': 'form_token'})
-                if token_input:
-                    form_token = token_input.get('value')
-
-            if not form_token:
-                # Это не критично, часто токен не обязателен
-                logger.debug("Не удалось найти form_token, попытка без него")
-                form_token = ""
-
-            login_data = {
-                'login_username': config.RUTRACKER_USERNAME,
-                'login_password': config.RUTRACKER_PASSWORD,
-                'login': 'вход',
-                'redirect': 'index.php',
-                'form_token': form_token,
+            payload = {
+                "cmd": "sessions.create",
+                "session": self.flaresolverr_session,
             }
-            logger.info("Отправка логина...")
-            response = self.session.post(login_url, data=login_data, timeout=self.timeout)
-            response.raise_for_status()
+            response = requests.post(self.flaresolverr_url, json=payload, timeout=30)
+            data = response.json()
 
-            if 'bb_session' in self.session.cookies:
-                logger.info("Авторизация успешна")
-                self._save_cookies()
+            if data.get("status") == "ok":
+                logger.info(f"Сессия FlareSolverr создана: {self.flaresolverr_session}")
+                self._session_created = True
                 return True
-            else:
-                if "неверное имя пользователя или пароль" in response.text.lower():
-                    logger.error("Неверный логин или пароль")
-                else:
-                    logger.warning("Авторизация не подтверждена")
-                return False
+
+            message = data.get("message", "")
+            if "already exists" in message.lower():
+                logger.info("Сессия FlareSolverr уже существует, используем её")
+                self._session_created = True
+                return True
+
+            logger.warning(f"Не удалось создать сессию FlareSolverr: {message}")
+            return False
 
         except Exception as e:
-            logger.error(f"Ошибка авторизации: {e}")
+            logger.warning(f"Ошибка создания сессии FlareSolverr: {e}")
             return False
 
     def _fetch_page(self, url: str) -> Optional[BeautifulSoup]:
-        """Загружает страницу, при 403 или пустом ответе пытается перелогиниться"""
+        """Загружает страницу через FlareSolverr с повторными попытками"""
+        if not self._session_created:
+            self._create_session()
+
+        request_timeout = (self.flaresolverr_timeout_ms / 1000) + 30
+
         for attempt in range(1, self.max_retries + 1):
             try:
-                logger.debug(f"Загрузка страницы (попытка {attempt}/{self.max_retries}): {url}")
-                response = self.session.get(url, timeout=self.timeout)
+                logger.debug(f"Загрузка через FlareSolverr (попытка {attempt}/{self.max_retries}): {url}")
 
-                if response.status_code == 403:
-                    logger.warning("Получен 403, пытаемся перелогиниться...")
-                    if self._login():
-                        logger.info("Перелогин успешен, повторяем запрос")
-                        response = self.session.get(url, timeout=self.timeout)
-                        response.raise_for_status()
-                    else:
-                        logger.error("Перелогин не удался")
-                        return None
+                payload = {
+                    "cmd": "request.get",
+                    "url": url,
+                    "maxTimeout": self.flaresolverr_timeout_ms,
+                }
+                if self._session_created:
+                    payload["session"] = self.flaresolverr_session
 
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
+                response = requests.post(
+                    self.flaresolverr_url,
+                    json=payload,
+                    timeout=request_timeout
+                )
+                data = response.json()
 
-                if not soup.find('body') or len(response.text) < 100:
-                    logger.warning("Получена пустая страница, возможно, требуется логин")
-                    if attempt == 1 and self._login():
-                        logger.info("Перелогин выполнен, повторяем запрос")
+                if data.get("status") != "ok":
+                    message = data.get("message", "")
+                    logger.warning(f"FlareSolverr вернул ошибку: {message}")
+
+                    if "session" in message.lower():
+                        logger.warning("Проблема с сессией FlareSolverr, пересоздаём...")
+                        self._session_created = False
+                        time.sleep(2 ** attempt)
+                        self._create_session()
                         continue
-                    else:
-                        logger.error("Страница пуста после логина")
+
+                    if attempt == self.max_retries:
                         return None
+                    time.sleep(2 ** attempt)
+                    continue
+
+                solution = data.get("solution") or {}
+                status = solution.get("status", 0)
+                html = solution.get("response", "")
+
+                if status != 200:
+                    logger.warning(f"FlareSolverr вернул статус {status} для {url}")
+                    if attempt == self.max_retries:
+                        return None
+                    time.sleep(2 ** attempt)
+                    continue
+
+                soup = BeautifulSoup(html, 'html.parser')
+
+                if not soup.find('body') or len(html) < 100:
+                    logger.warning("Получена пустая страница")
+                    if attempt == self.max_retries:
+                        return None
+                    time.sleep(2 ** attempt)
+                    continue
 
                 return soup
 
             except requests.exceptions.RequestException as e:
-                logger.warning(f"Ошибка загрузки (попытка {attempt}): {e}")
+                logger.warning(f"Ошибка запроса к FlareSolverr (попытка {attempt}): {e}")
                 if attempt == self.max_retries:
                     logger.error(f"Не удалось загрузить страницу после {self.max_retries} попыток: {url}")
                     return None
                 time.sleep(2 ** attempt)
 
             except Exception as e:
-                logger.error(f"Неожиданная ошибка при загрузке {url}: {e}")
+                logger.error(f"Неожиданная ошибка при загрузке {url}: {e}", exc_info=True)
                 return None
 
         return None
 
-    def parse_page(self, url: str) -> Dict:
+    def parse_page(self, url: str) -> Dict[str, Any]:
+        """Парсит страницу раздачи и возвращает словарь с извлечёнными данными"""
         soup = self._fetch_page(url)
         if soup is None:
             return {}
@@ -202,64 +159,65 @@ class PageParser:
 
     def _parse_category(self, soup: BeautifulSoup) -> str:
         try:
-            links = soup.select('td.nav a')
+            links = soup.select(self.SELECTORS['category_links'])
             if links:
                 return links[-1].get_text(strip=True)
-            return 'Неизвестно'
+            return ''
         except (AttributeError, ValueError):
-            return 'Неизвестно'
+            return ''
 
     def _parse_size(self, soup: BeautifulSoup) -> str:
         try:
-            size_elem = soup.select_one('#tor-size-humn')
+            size_elem = soup.select_one(self.SELECTORS['size'])
             if size_elem:
                 return size_elem.get_text(strip=True)
-            attach = soup.find('fieldset', class_='attach')
-            if attach:
-                ul = attach.find('ul', class_='inlined')
-                if ul:
-                    lis = ul.find_all('li')
-                    if len(lis) >= 2:
-                        return lis[-1].get_text(strip=True)
-            return 'Неизвестно'
+            attach_ul = soup.select_one(self.SELECTORS['size_attach_ul'])
+            if attach_ul:
+                lis = attach_ul.find_all('li')
+                if len(lis) >= 2:
+                    return lis[-1].get_text(strip=True)
+            return ''
         except (AttributeError, ValueError):
-            return 'Неизвестно'
+            return ''
 
     def _parse_seeds(self, soup: BeautifulSoup) -> int:
         try:
-            seed_elem = soup.select_one('span.seed b')
+            seed_elem = soup.select_one(self.SELECTORS['seeds'])
             if seed_elem:
-                return int(seed_elem.get_text(strip=True))
+                m = re.search(r'\d+', seed_elem.get_text(strip=True))
+                return int(m.group()) if m else 0
             return 0
         except (AttributeError, ValueError):
             return 0
 
     def _parse_leechers(self, soup: BeautifulSoup) -> int:
         try:
-            leech_elem = soup.select_one('span.leech b')
+            leech_elem = soup.select_one(self.SELECTORS['leechers'])
             if leech_elem:
-                return int(leech_elem.get_text(strip=True))
+                m = re.search(r'\d+', leech_elem.get_text(strip=True))
+                return int(m.group()) if m else 0
             return 0
         except (AttributeError, ValueError):
             return 0
 
     def _parse_downloads(self, soup: BeautifulSoup) -> int:
         try:
-            td = soup.find('td', class_='borderless', string=re.compile(r'скачан', re.I))
-            if td:
-                b = td.find('b')
-                if b:
-                    text = b.get_text(strip=True)
-                    match = re.search(r'(\d+)', text)
-                    if match:
-                        return int(match.group(1))
+            for td in soup.select(self.SELECTORS['downloads_td']):
+                text = td.get_text(' ', strip=True).lower()
+                if 'скачан' in text:
+                    b = td.find('b')
+                    if b:
+                        # Упрощённый regex: захватываем только цифры и пробелы
+                        m = re.search(r'([\d\s]+)', b.get_text(strip=True))
+                        if m:
+                            return int(m.group(1).replace(' ', '').replace('\xa0', ''))
             return 0
         except (AttributeError, ValueError):
             return 0
 
     def _parse_description(self, soup: BeautifulSoup) -> str:
         try:
-            post = soup.select_one('div.post_body')
+            post = soup.select_one(self.SELECTORS['description'])
             if post:
                 for tag in post.find_all(['script', 'style']):
                     tag.decompose()
@@ -271,6 +229,7 @@ class PageParser:
             return ''
 
     def process_entries(self, limit: Optional[int] = None) -> int:
+        """Обрабатывает непарсенные записи из БД"""
         if limit is None:
             limit = config.PARSING_LIMIT
 
@@ -282,48 +241,77 @@ class PageParser:
                 logger.info(f"Парсинг: {entry.title[:50]}...")
                 page_data = self.parse_page(entry.link)
 
-                if page_data:
-                    entry.category = page_data.get('category', entry.category)
-                    entry.size = page_data.get('size', entry.size)
-                    entry.seeds = page_data.get('seeds', 0)
-                    entry.leechers = page_data.get('leechers', 0)
-                    entry.downloads = page_data.get('downloads', 0)
-                    entry.full_description = page_data.get('full_description', '')
-                    entry.is_page_parsed = True
+                # Если страница не загружена — увеличиваем счётчик попыток
+                if not page_data:
+                    entry.parse_attempts = (entry.parse_attempts or 0) + 1
 
-                    if self.db.save_entry(entry):
-                        processed += 1
-                        self.db.log_processing(
-                            entry.rss_id,
-                            'page_parser',
-                            'success',
-                            f'Размер: {entry.size}, сиды: {entry.seeds}'
+                    if entry.parse_attempts >= config.PARSING_MAX_ATTEMPTS:
+                        entry.is_page_parsed = True
+                        logger.warning(
+                            f"Пропускаем после {entry.parse_attempts} неудач: {entry.title[:40]}..."
                         )
-                        logger.info(f"✅ Парсинг успешен: {entry.title[:40]}...")
-                    else:
                         self.db.log_processing(
                             entry.rss_id,
                             'page_parser',
                             'error',
-                            'Ошибка сохранения после парсинга'
+                            f'Превышен лимит попыток парсинга ({entry.parse_attempts})'
                         )
-                else:
-                    entry.is_page_parsed = True
+                    else:
+                        logger.info(
+                            f"Неудача {entry.parse_attempts}/{config.PARSING_MAX_ATTEMPTS}: "
+                            f"{entry.title[:40]}..."
+                        )
+                        self.db.log_processing(
+                            entry.rss_id,
+                            'page_parser',
+                            'warning',
+                            f'Неудача парсинга ({entry.parse_attempts}/{config.PARSING_MAX_ATTEMPTS})'
+                        )
+
                     self.db.save_entry(entry)
+                    continue
+
+                # Обновляем только осмысленные строковые значения
+                cat = page_data.get('category')
+                if cat and cat != 'Неизвестно':
+                    entry.category = cat
+
+                size = page_data.get('size')
+                if size and size != 'Неизвестно':
+                    entry.size = size
+
+                # Числовые значения перезаписываем всегда
+                # (0 — легитимное значение для seeds/leechers/downloads)
+                entry.seeds = page_data.get('seeds', 0)
+                entry.leechers = page_data.get('leechers', 0)
+                entry.downloads = page_data.get('downloads', 0)
+                entry.full_description = page_data.get('full_description', '')
+
+                entry.is_page_parsed = True
+
+                if self.db.save_entry(entry):
+                    processed += 1
                     self.db.log_processing(
                         entry.rss_id,
                         'page_parser',
-                        'warning',
-                        'Страница спарсена частично или пустая'
+                        'success',
+                        f'Размер: {entry.size}, сиды: {entry.seeds}'
+                    )
+                    logger.info(f"✅ Парсинг успешен: {entry.title[:40]}...")
+                else:
+                    self.db.log_processing(
+                        entry.rss_id,
+                        'page_parser',
+                        'error',
+                        'Ошибка сохранения после парсинга'
                     )
 
-                time.sleep(self.delay)
-
             except Exception as e:
-                logger.error(f"Ошибка обработки {entry.rss_id}: {e}")
-                entry.is_page_parsed = True
-                self.db.save_entry(entry)
+                logger.error(f"Ошибка обработки {entry.rss_id}: {e}", exc_info=True)
                 self.db.log_processing(entry.rss_id, 'page_parser', 'error', str(e))
 
-        logger.info(f"Обработано парсингом: {processed}/{len(entries)}")
+            finally:
+                time.sleep(self.delay)
+
+        logger.info(f"Успешно распарсено: {processed}/{len(entries)}")
         return processed

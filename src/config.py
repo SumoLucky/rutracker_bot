@@ -21,6 +21,7 @@ class Config:
     RSS_MAX_ENTRIES: int = int(os.getenv("RSS_MAX_ENTRIES", "30"))
     RSS_TIMEOUT: int = int(os.getenv("RSS_TIMEOUT", "30"))
     RSS_RETRIES: int = int(os.getenv("RSS_RETRIES", "3"))
+    MAX_SNAPSHOTS: int = int(os.getenv("MAX_SNAPSHOTS", "20"))
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")  # Например: postgresql://user:pass@host:port/dbname
@@ -29,10 +30,21 @@ class Config:
     RUTRACKER_USERNAME: str = os.getenv("RUTRACKER_USERNAME", "")
     RUTRACKER_PASSWORD: str = os.getenv("RUTRACKER_PASSWORD", "")
     RUTRACKER_COOKIES: str = os.getenv("RUTRACKER_COOKIES", "")
+    # Задержка между запросами к страницам (секунды)
     PARSING_DELAY: float = float(os.getenv("PARSING_DELAY", "0.5"))
+    # Таймаут HTTP-запроса (секунды)
     PARSING_TIMEOUT: int = int(os.getenv("PARSING_TIMEOUT", "15"))
+    # Лимит записей за один цикл парсинга (0 = без лимита)
     PARSING_LIMIT: Optional[int] = int(os.getenv("PARSING_LIMIT", "0")) or None
+    # Сколько раз пробуем запрос при сетевом сбое (внутри одной попытки парсинга)
     PARSING_RETRIES: int = int(os.getenv("PARSING_RETRIES", "3"))
+    # Сколько циклов пытаемся парсить одну запись, прежде чем помечаем как неудачную
+    PARSING_MAX_ATTEMPTS: int = int(os.getenv("PARSING_MAX_ATTEMPTS", "3"))
+
+    # FlareSolverr
+    FLARESOLVERR_URL: str = os.getenv("FLARESOLVERR_URL", "http://localhost:8191/v1")
+    FLARESOLVERR_SESSION: str = os.getenv("FLARESOLVERR_SESSION", "rutracker_session")
+    FLARESOLVERR_TIMEOUT_MS: int = int(os.getenv("FLARESOLVERR_TIMEOUT_MS", "60000"))
 
     # ИИ
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
