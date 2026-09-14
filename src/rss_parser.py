@@ -29,8 +29,45 @@ class RSSParser:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         })
 
-    def _log_raw_entries(self, entries: List[Dict], source: str = "rss"):
-        """Сохраняет сырые RSS-записи в файл для отладки"""
+    def _cleanup_old_snapshots(self, snapshot_dir: str) -> None:
+        """Удаляет старые снапшоты, оставляя только последние MAX_SNAPSHOTS"""
+        max_files = getattr(config, 'MAX_SNAPSHOTS', 20)
+        if max_files <= 0:
+            logger.debug("MAX_SNAPSHOTS <= 0, удаление старых файлов отключено")
+            return
+
+        try:
+            files = sorted(
+                [os.path.join(snapshot_dir, f) for f in os.listdir(snapshot_dir) if f.startswith('feed_')],
+                key=os.path.getctime
+            )
+            if len(files) > max_files:
+                for old_file in files[:-max_files]:
+                    os.remove(old_file)
+                    logger.debug(f"Удалён старый снапшот: {old_file}")
+        except Exception as e:
+            logger.warning(f"Ошибка при очистке старых снапшотов: {e}")
+
+    def _save_rss_snapshot(self, response_text: str) -> None:
+        """Сохраняет полный XML-снапшот RSS-ленты и запускает очистку старых"""
+        if not config.DEBUG:
+            return
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            snapshot_dir = "rss_snapshots"
+            os.makedirs(snapshot_dir, exist_ok=True)
+            filename = os.path.join(snapshot_dir, f"feed_{timestamp}.xml")
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(response_text)
+            logger.debug(f"Снапшот RSS сохранён: {filename}")
+
+            self._cleanup_old_snapshots(snapshot_dir)
+
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить снапшот RSS: {e}")
+
+    def _log_raw_entries(self, entries: List[Dict], source: str = "rss") -> None:
+        """Сохраняет сырые RSS-записи в файл для отладки (только DEBUG)"""
         if not config.DEBUG:
             return
         log_file = "rss_feed.log"
@@ -67,7 +104,7 @@ class RSSParser:
             logger.warning(f"Не удалось записать RSS в лог: {e}")
 
     def fetch_feed(self, max_entries: Optional[int] = None) -> List[Dict]:
-        """Загрузка RSS с повторными попытками"""
+        """Загрузка RSS с повторными попытками и сохранением снапшота"""
         if max_entries is None:
             max_entries = self.max_entries
 
@@ -76,6 +113,8 @@ class RSSParser:
                 logger.info(f"Загрузка RSS (попытка {attempt}/{self.retries}): {self.rss_url}")
                 response = self.session.get(self.rss_url, timeout=self.timeout)
                 response.raise_for_status()
+                self._save_rss_snapshot(response.text)
+
                 feed = feedparser.parse(response.text)
 
                 if feed.bozo:
@@ -103,16 +142,23 @@ class RSSParser:
         return []
 
     def process_new_entries(self, max_entries: Optional[int] = None) -> Dict[str, int]:
-        """Обработка новых записей"""
+        """Обработка новых записей с исключением [Обновлено]"""
         raw_entries = self.fetch_feed(max_entries)
         stats = {
             'total_fetched': len(raw_entries),
             'already_exists': 0,
             'saved': 0,
-            'errors': 0
+            'errors': 0,
+            'skipped_updated': 0,
         }
 
         for raw in raw_entries:
+            title = raw.get('title', '')
+            if '[Обновлено]' in title:
+                stats['skipped_updated'] += 1
+                logger.debug(f"Пропущена запись с [Обновлено]: {title[:50]}...")
+                continue
+
             try:
                 entry = TorrentEntry.from_rss_entry(raw)
                 rss_id = entry.rss_id
@@ -151,7 +197,9 @@ class RSSParser:
 
         logger.info(
             f"Обработано RSS: всего={stats['total_fetched']}, "
+            f"пропущено [Обновлено]={stats['skipped_updated']}, "
             f"существовало={stats['already_exists']}, "
             f"сохранено={stats['saved']}, ошибок={stats['errors']}"
         )
         return stats
+    

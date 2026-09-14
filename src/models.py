@@ -45,6 +45,7 @@ class TorrentEntry:
     content_type: str = ""
 
     # === Статусы обработки ===
+    parse_attempts: int = 0
     is_page_parsed: bool = False
     is_ai_analyzed: bool = False
     is_sent: bool = False

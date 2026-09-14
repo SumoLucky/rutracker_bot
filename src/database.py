@@ -62,7 +62,8 @@ class Database:
                         is_ai_analyzed BOOLEAN DEFAULT FALSE,
                         is_sent BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        parse_attempts INTEGER DEFAULT 0
                     )
                 """)
 
@@ -101,6 +102,7 @@ class Database:
                             category_id, category, size, seeds, leechers, downloads, full_description,
                             ai_analysis, relevance_score, ai_summary, recommendation, ai_tags, ai_category,
                             ai_retries, ai_last_error, content_type,
+                            parse_attempts,
                             is_page_parsed, is_ai_analyzed, is_sent,
                             created_at, updated_at
                         ) VALUES (
@@ -108,6 +110,7 @@ class Database:
                             %(category_id)s, %(category)s, %(size)s, %(seeds)s, %(leechers)s, %(downloads)s, %(full_description)s,
                             %(ai_analysis)s, %(relevance_score)s, %(ai_summary)s, %(recommendation)s, %(ai_tags)s, %(ai_category)s,
                             %(ai_retries)s, %(ai_last_error)s, %(content_type)s,
+                            %(parse_attempts)s,
                             %(is_page_parsed)s, %(is_ai_analyzed)s, %(is_sent)s,
                             %(created_at)s, %(updated_at)s
                         )
@@ -133,6 +136,7 @@ class Database:
                             ai_retries = EXCLUDED.ai_retries,
                             ai_last_error = EXCLUDED.ai_last_error,
                             content_type = EXCLUDED.content_type,
+                            parse_attempts = EXCLUDED.parse_attempts,
                             is_page_parsed = EXCLUDED.is_page_parsed,
                             is_ai_analyzed = EXCLUDED.is_ai_analyzed,
                             is_sent = EXCLUDED.is_sent,
@@ -206,7 +210,23 @@ class Database:
                 return [TorrentEntry.from_dict(dict(row)) for row in rows]
 
     def get_unparsed_entries(self, limit: Optional[int] = None) -> List[TorrentEntry]:
-        return self.get_entries_by_status(page_parsed=False, ai_analyzed=False, sent=False, limit=limit)
+        query = """
+            SELECT * FROM torrents
+            WHERE is_page_parsed = FALSE
+              AND is_ai_analyzed = FALSE
+              AND is_sent = FALSE
+              AND parse_attempts < %s
+            ORDER BY updated DESC
+        """
+        params = [config.PARSING_MAX_ATTEMPTS]
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(limit)
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, tuple(params))
+                rows = cur.fetchall()
+                return [TorrentEntry.from_dict(dict(row)) for row in rows]
 
     def get_unanalyzed_entries(self, limit: Optional[int] = None) -> List[TorrentEntry]:
         return self.get_entries_by_status(page_parsed=True, ai_analyzed=False, sent=False, limit=limit)
