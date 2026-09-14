@@ -31,45 +31,16 @@ class PageParser:
         self.delay = config.PARSING_DELAY
         self.max_retries = config.PARSING_RETRIES
         self.flaresolverr_url = config.FLARESOLVERR_URL
-        self.flaresolverr_session = config.FLARESOLVERR_SESSION
         self.flaresolverr_timeout_ms = config.FLARESOLVERR_TIMEOUT_MS
-        self._session_created = False
-
-        self._create_session()
-
-    def _create_session(self) -> bool:
-        """Создаёт или переиспользует сессию в FlareSolverr"""
-        try:
-            payload = {
-                "cmd": "sessions.create",
-                "session": self.flaresolverr_session,
-            }
-            response = requests.post(self.flaresolverr_url, json=payload, timeout=30)
-            data = response.json()
-
-            if data.get("status") == "ok":
-                logger.info(f"Сессия FlareSolverr создана: {self.flaresolverr_session}")
-                self._session_created = True
-                return True
-
-            message = data.get("message", "")
-            if "already exists" in message.lower():
-                logger.info("Сессия FlareSolverr уже существует, используем её")
-                self._session_created = True
-                return True
-
-            logger.warning(f"Не удалось создать сессию FlareSolverr: {message}")
-            return False
-
-        except Exception as e:
-            logger.warning(f"Ошибка создания сессии FlareSolverr: {e}")
-            return False
+        # Сессии временно отключены — FlareSolverr с сессией не справляется на этом IP
+        # Работаем без сессий: каждый запрос = новый временный браузер
+        logger.info("PageParser: сессии FlareSolverr отключены, работаем без них")
 
     def _fetch_page(self, url: str) -> Optional[BeautifulSoup]:
-        """Загружает страницу через FlareSolverr с повторными попытками"""
-        if not self._session_created:
-            self._create_session()
-
+        """
+        Загружает страницу через FlareSolverr с повторными попытками.
+        Работает без сессий: FlareSolverr создаёт временный браузер на каждый запрос.
+        """
         request_timeout = (self.flaresolverr_timeout_ms / 1000) + 30
 
         for attempt in range(1, self.max_retries + 1):
@@ -81,8 +52,6 @@ class PageParser:
                     "url": url,
                     "maxTimeout": self.flaresolverr_timeout_ms,
                 }
-                if self._session_created:
-                    payload["session"] = self.flaresolverr_session
 
                 response = requests.post(
                     self.flaresolverr_url,
@@ -94,13 +63,6 @@ class PageParser:
                 if data.get("status") != "ok":
                     message = data.get("message", "")
                     logger.warning(f"FlareSolverr вернул ошибку: {message}")
-
-                    if "session" in message.lower():
-                        logger.warning("Проблема с сессией FlareSolverr, пересоздаём...")
-                        self._session_created = False
-                        time.sleep(2 ** attempt)
-                        self._create_session()
-                        continue
 
                     if attempt == self.max_retries:
                         return None
@@ -207,7 +169,6 @@ class PageParser:
                 if 'скачан' in text:
                     b = td.find('b')
                     if b:
-                        # Упрощённый regex: захватываем только цифры и пробелы
                         m = re.search(r'([\d\s]+)', b.get_text(strip=True))
                         if m:
                             return int(m.group(1).replace(' ', '').replace('\xa0', ''))
@@ -281,7 +242,6 @@ class PageParser:
                     entry.size = size
 
                 # Числовые значения перезаписываем всегда
-                # (0 — легитимное значение для seeds/leechers/downloads)
                 entry.seeds = page_data.get('seeds', 0)
                 entry.leechers = page_data.get('leechers', 0)
                 entry.downloads = page_data.get('downloads', 0)
